@@ -1,4 +1,4 @@
-"""Train and evaluate an EfficientNet-B0 classifier on DermNet (23 classes).
+"""Train and evaluate an ImageNet-pretrained classifier on DermNet (23 classes).
 
 Runs on Apple-silicon GPU (PyTorch MPS), falling back to CUDA or CPU.
 Phase 1 trains only a new head on a frozen ImageNet backbone; phase 2 fine-tunes
@@ -6,7 +6,7 @@ the whole network. A resumable checkpoint is written after every epoch
 (``--resume`` continues from it). The checkpoint with the best validation macro F1 (validation
 is a stratified 10% split of train) is evaluated once on the held-out test set.
 
-    python train.py --data data/dermnet
+    python train.py --arch efficientnet_b0   # or convnext_tiny, resnet50
 """
 import argparse
 import json
@@ -25,7 +25,6 @@ from torch import nn
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, models, transforms
 
-LAST_CKPT = Path("checkpoints/last.pt")
 MEAN, STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)  # ImageNet stats the backbone expects
 
 
@@ -68,16 +67,35 @@ def make_loaders(data_dir, img_size, batch_size, workers, seed):
     )
 
 
-def build_model(num_classes):
-    model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
-    in_features = model.classifier[1].in_features
-    model.classifier = nn.Sequential(nn.Dropout(0.3), nn.Linear(in_features, num_classes))
+ARCHS = {
+    "efficientnet_b0": (models.efficientnet_b0, models.EfficientNet_B0_Weights.IMAGENET1K_V1),
+    "convnext_tiny": (models.convnext_tiny, models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1),
+    "resnet50": (models.resnet50, models.ResNet50_Weights.IMAGENET1K_V2),
+}
+
+
+def head_of(model):
+    return model.fc if hasattr(model, "fc") else model.classifier
+
+
+def build_model(arch, num_classes):
+    fn, weights = ARCHS[arch]
+    model = fn(weights=weights)
+    new_head = lambda in_f: nn.Sequential(nn.Dropout(0.3), nn.Linear(in_f, num_classes))
+    if arch == "resnet50":
+        model.fc = new_head(model.fc.in_features)
+    elif arch == "efficientnet_b0":
+        model.classifier = new_head(model.classifier[1].in_features)
+    else:  # convnext keeps its LayerNorm + Flatten, only the final Linear is replaced
+        model.classifier[2] = new_head(model.classifier[2].in_features)
     return model
 
 
 def set_backbone_trainable(model, trainable):
-    for p in model.features.parameters():
+    for p in model.parameters():
         p.requires_grad = trainable
+    for p in head_of(model).parameters():
+        p.requires_grad = True
 
 
 @torch.no_grad()
@@ -90,7 +108,7 @@ def predict(model, loader, device):
     return torch.cat(logits), torch.cat(labels)
 
 
-def run_phase(name, model, loaders, device, epochs, lr, history, best, resume):
+def run_phase(name, model, loaders, device, epochs, lr, history, best, resume, last_ckpt):
     train_loader, val_loader = loaders
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=lr, weight_decay=1e-4)
@@ -132,7 +150,7 @@ def run_phase(name, model, loaders, device, epochs, lr, history, best, resume):
             best.update(f1=row["val_macro_f1"], epoch=row["epoch"])
             torch.save(model.state_dict(), best["path"])
         torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
-                    "phase": name, "history": history, "best": best}, LAST_CKPT)
+                    "phase": name, "history": history, "best": best}, last_ckpt)
 
 
 def plot_history(history, out):
@@ -189,7 +207,8 @@ def evaluate(model, test_loader, classes, device, out_dir):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/dermnet")
-    ap.add_argument("--out", default="results")
+    ap.add_argument("--arch", choices=sorted(ARCHS), default="efficientnet_b0")
+    ap.add_argument("--out", help="results folder (default: results/<arch>)")
     ap.add_argument("--img-size", type=int, default=224)
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--head-epochs", type=int, default=3)
@@ -198,23 +217,25 @@ def main():
     ap.add_argument("--finetune-lr", type=float, default=3e-4)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--resume", action="store_true", help="continue from checkpoints/last.pt")
+    ap.add_argument("--resume", action="store_true", help="continue from checkpoints/<arch>/last.pt")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
     device = get_device()
-    out_dir = Path(args.out)
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path(args.out or f"results/{args.arch}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir = Path("checkpoints") / args.arch
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    last_ckpt = ckpt_dir / "last.pt"
     train_loader, val_loader, test_loader, classes = make_loaders(
         args.data, args.img_size, args.batch_size, args.workers, args.seed
     )
     print(f"device={device} classes={len(classes)} train={len(train_loader.dataset)} "
           f"val={len(val_loader.dataset)} test={len(test_loader.dataset)}", flush=True)
 
-    model = build_model(len(classes)).to(device)
-    history, best = [], {"f1": -1.0, "epoch": None, "path": Path("checkpoints/best.pt")}
-    best["path"].parent.mkdir(exist_ok=True)
-    resume = torch.load(LAST_CKPT, map_location=device, weights_only=False) if args.resume else None
+    model = build_model(args.arch, len(classes)).to(device)
+    history, best = [], {"f1": -1.0, "epoch": None, "path": ckpt_dir / "best.pt"}
+    resume = torch.load(last_ckpt, map_location=device, weights_only=False) if args.resume else None
     if resume:
         model.load_state_dict(resume["model"])
         history, best = resume["history"], resume["best"]
@@ -222,9 +243,9 @@ def main():
     loaders = (train_loader, val_loader)
 
     set_backbone_trainable(model, False)
-    run_phase("head", model, loaders, device, args.head_epochs, args.head_lr, history, best, resume)
+    run_phase("head", model, loaders, device, args.head_epochs, args.head_lr, history, best, resume, last_ckpt)
     set_backbone_trainable(model, True)
-    run_phase("finetune", model, loaders, device, args.finetune_epochs, args.finetune_lr, history, best, resume)
+    run_phase("finetune", model, loaders, device, args.finetune_epochs, args.finetune_lr, history, best, resume, last_ckpt)
 
     model.load_state_dict(torch.load(best["path"], map_location=device))
     metrics = evaluate(model, test_loader, classes, device, out_dir)
