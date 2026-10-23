@@ -14,3 +14,8 @@ data/
 *.nii
 *.zip
 session_data/
+checkpoints/
+*.pt
+*.pth
+*.keras
+*.tflite
