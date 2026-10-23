@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.ipynb_checkpoints/
+# data never goes in these repos
+data/
+*.csv
+*.nii
+*.zip
+session_data/
