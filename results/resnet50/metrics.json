@@ -1,0 +1,25 @@
+{
+  "test_images": 4002,
+  "num_classes": 23,
+  "top1_accuracy": 0.6839080452919006,
+  "top5_accuracy": 0.9175412058830261,
+  "macro_f1": 0.64361492219797,
+  "weighted_f1": 0.6814210672536005,
+  "best_epoch": 12,
+  "config": {
+    "data": "data/dermnet",
+    "arch": "resnet50",
+    "out": null,
+    "img_size": 224,
+    "batch_size": 32,
+    "head_epochs": 3,
+    "finetune_epochs": 10,
+    "head_lr": 0.001,
+    "finetune_lr": 0.0003,
+    "workers": 4,
+    "seed": 0,
+    "resume": false
+  },
+  "device": "mps",
+  "train_minutes": 208.1
+}
