@@ -1,0 +1,24 @@
+{
+  "test_images": 4002,
+  "num_classes": 23,
+  "top1_accuracy": 0.6564217805862427,
+  "top5_accuracy": 0.9005497097969055,
+  "macro_f1": 0.6107926798808504,
+  "weighted_f1": 0.6530956914115436,
+  "best_epoch": 12,
+  "config": {
+    "data": "data/dermnet",
+    "out": "results",
+    "img_size": 224,
+    "batch_size": 32,
+    "head_epochs": 3,
+    "finetune_epochs": 10,
+    "head_lr": 0.001,
+    "finetune_lr": 0.0003,
+    "workers": 4,
+    "seed": 0,
+    "resume": true
+  },
+  "device": "mps",
+  "train_minutes": 207.4
+}
