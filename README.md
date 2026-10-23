@@ -58,6 +58,19 @@ python train.py --arch resnet50 --resume   # continue an interrupted run from ch
 
 Model weights are written to `checkpoints/` and are not committed.
 
+### Plain-language explanation (optional)
+
+`explain.py` asks Claude (`claude-opus-5-5`, via the `anthropic` SDK) for a short, general explanation of a class:
+what it is, common signs and usual treatment approaches. It can also classify an image first and explain the
+prediction. It needs `pip install anthropic` and `ANTHROPIC_API_KEY` set in your environment.
+
+```bash
+python explain.py "Eczema Photos"
+python explain.py --image photo.jpg --arch resnet50   # needs a trained checkpoint
+```
+
+The text is educational and can be wrong, as can the classifier. It is not a diagnosis or treatment plan.
+
 ## Limitations
 
 - **Class imbalance:** training classes range from 212 images (Urticaria) to 1,405 (Psoriasis). Smaller classes
